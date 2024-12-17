@@ -27,7 +27,6 @@ public class PointServiceImplTest {
 
     private static UserPointTable userPointTable;
     private static PointHistoryTable pointHistoryTable;
-
     private static PointServiceImpl pointService;
 
     @BeforeAll
