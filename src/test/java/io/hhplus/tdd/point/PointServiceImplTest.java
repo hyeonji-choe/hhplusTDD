@@ -15,12 +15,12 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.verify;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-//@SpringBootTest(classes = {PointService.class, UserPointTable.class, PointHistoryTable.class})
 @ExtendWith(SpringExtension.class)
 @Import({PointServiceImpl.class, UserPointTable.class, PointHistoryTable.class})
 public class PointServiceImplTest {
@@ -38,6 +38,7 @@ public class PointServiceImplTest {
     @BeforeEach
     void insertPoint(){
         UserPoint point = userPointTable.insertOrUpdate(1,10000);
+        pointHistoryTable.insert(1,10000,TransactionType.CHARGE,point.updateMillis());
         System.out.println("point : "+point.point()+", userId : "+point.id());
     }
 
@@ -69,16 +70,23 @@ public class PointServiceImplTest {
     }
 
     @Test
+    @DisplayName("같은유저의포인트 사용 10번요청")
     public void useTest() throws InterruptedException {
         Runnable usePoint = () -> pointService.usePoint(1,1);
         concurentTest(10, usePoint);
 
         UserPoint after = pointService.getUserPoint(1);
         System.out.println("=====after point : "+after.point());
+
+        long count = pointService.getUserPointHistory(1).stream().filter(
+                h->h.amount()==1 && h.type().equals(TransactionType.USE)
+        ).count();
+        assertThat(count).isEqualTo(10);
         assertThat(after.point()).isEqualTo(9990);
     }
 
     @Test
+    @DisplayName("같은유저의포인트 충전 10번요청")
     public void chargeTest() throws InterruptedException {
         Runnable usePoint = () -> pointService.chargePoint(1,1);
         concurentTest(10, usePoint);
@@ -86,6 +94,27 @@ public class PointServiceImplTest {
         UserPoint after = pointService.getUserPoint(1);
         System.out.println("=====after point : "+after.point());
         assertThat(after.point()).isEqualTo(10010);
+    }
+
+    @Test
+    void concurrentOtherUser() throws InterruptedException {
+        long pointsToAdd = 10;
+        long pointsToUse = 1;
+        int numberOfThreads = 5;
+
+        //ExecutorService를 사용해서 여러스레드를 관리
+        ExecutorService executorService = Executors.newFixedThreadPool(numberOfThreads);
+        for(int i =0 ; i<numberOfThreads ; i++){
+            executorService.submit(()->pointService.chargePoint(2,pointsToAdd));
+            executorService.submit(()->pointService.chargePoint(3,pointsToAdd));
+            executorService.submit(()->pointService.usePoint(2,pointsToUse));
+            executorService.submit(()->pointService.usePoint(3,pointsToUse));
+        }
+        executorService.shutdown();
+        executorService.awaitTermination(5, TimeUnit.SECONDS);//모든 스레드가 완료될때 까지 기다림
+        long expectedPoints = pointsToAdd*numberOfThreads - pointsToUse*numberOfThreads;
+        assertEquals(expectedPoints,pointService.getUserPoint(2).point());
+        assertEquals(expectedPoints,pointService.getUserPoint(3).point());
     }
 
     void concurentTest(int excuteCount, Runnable method) throws InterruptedException {
